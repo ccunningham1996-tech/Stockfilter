@@ -35,7 +35,7 @@ def fix_splits():
         try:
             stock = yf.Ticker(ticker)
             splits = stock.splits
-            if splits.empty:
+            if splits is None or splits.empty:
                 continue
                 
             # Filter splits from 2025-01-01 onwards
