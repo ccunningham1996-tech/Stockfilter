@@ -6,9 +6,11 @@ from datetime import datetime, timedelta
 
 def run_job(script_name):
     print(f"[{datetime.now()}] Starting {script_name}...")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.getcwd()
     try:
-        # Run using the same python interpreter as the scheduler
-        result = subprocess.run([sys.executable, script_name], capture_output=True, text=True, check=True)
+        # Run using the same python interpreter as the scheduler, passing PYTHONPATH
+        result = subprocess.run([sys.executable, script_name], env=env, capture_output=True, text=True, check=True)
         print(f"[{datetime.now()}] Finished {script_name}.")
         print("STDOUT:")
         print(result.stdout)
@@ -18,6 +20,7 @@ def run_job(script_name):
         print(e.stdout)
         print("STDERR:")
         print(e.stderr)
+
 
 def run_pipeline():
     print(f"=== Pipeline execution started at {datetime.now()} ===")
