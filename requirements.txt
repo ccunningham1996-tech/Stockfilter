@@ -1,0 +1,6 @@
+streamlit
+finnhub-python
+alpaca-py
+pandas
+python-dotenv
+yfinance
