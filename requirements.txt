@@ -4,3 +4,6 @@ alpaca-py
 pandas
 python-dotenv
 yfinance
+lxml
+beautifulsoup4
+
