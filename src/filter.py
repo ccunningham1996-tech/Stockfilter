@@ -346,8 +346,9 @@ def run_filter():
                     conn_update.commit()
                     conn_update.close()
                 else:
-                    cash_per_trade = available_cash / len(live_passing_trades)
-                    print(f"Allocating ${cash_per_trade:.2f} per trade.")
+                    MAX_CASH_PER_TRADE = 10000.0  # Cap allocation per trade to $10,000
+                    cash_per_trade = min(available_cash / len(live_passing_trades), MAX_CASH_PER_TRADE)
+                    print(f"Allocating ${cash_per_trade:.2f} per trade (Cap: ${MAX_CASH_PER_TRADE:.2f}).")
                     
                     conn_update = get_connection()
                     cursor_update = conn_update.cursor()
