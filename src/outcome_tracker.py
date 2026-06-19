@@ -282,14 +282,14 @@ def evaluate_pending_trades():
                     conn_up.commit()
                     conn_up.close()
                     
-                    # 1. Check 8% Rolling Stop Loss
-                    stop_price = highest_price_recorded * 0.92
+                    # 1. Check 6% Rolling Stop Loss
+                    stop_price = highest_price_recorded * 0.94
                     exit_triggered = False
                     exit_reason = ""
                     
                     if current_price <= stop_price:
                         exit_triggered = True
-                        exit_reason = "8% Trailing Stop"
+                        exit_reason = "6% Trailing Stop"
                         print(f"  -> Exit Triggered: {ticker} price ${current_price:.2f} is below trailing stop price ${stop_price:.2f} (Peak: ${highest_price_recorded:.2f})")
                     
                     # 2. Check 30-day SMA Drop Sell Rule (only if not already stopped out)
