@@ -132,6 +132,7 @@ def run_filter():
     
     print(f"Found {len(pending_signals)} pending signals to process.")
     live_passing_trades = []
+    tickers_passed_today = set()
     
     for idx, signal in enumerate(pending_signals):
         # Rate limit safety sleep
@@ -282,6 +283,17 @@ def run_filter():
             print(f"Error getting SPY regime for {ticker}: {e}")
             regime = "Unknown"
 
+        # De-duplication check:
+        # Check if we already own it or if we already added it to our buy list today.
+        conn_check = get_connection()
+        cursor_check = conn_check.cursor()
+        cursor_check.execute("SELECT COUNT(*) FROM trades WHERE ticker = ? AND exit_date IS NULL", (ticker,))
+        already_owned = cursor_check.fetchone()[0] > 0
+        conn_check.close()
+        
+        is_duplicate = (ticker in tickers_passed_today) or already_owned
+        trade_status = 'skipped_duplicate' if is_duplicate else ('pending_buy' if is_live else 'none')
+
         # Write updates and insert trade in a brief write transaction
         conn_write = get_connection()
         cursor_write = conn_write.cursor()
@@ -314,14 +326,17 @@ def run_filter():
             win_rate, n_ratings, target_price, entry_price, spike_multiple,
             is_earnings_prox, earnings_date, eps_actual, eps_estimate,
             buy_ratio, hold_ratio, sell_ratio, div_score,
-            regime, 'pending_buy' if is_live else 'none'
+            regime, trade_status
         ))
         inserted_trade_id = cursor_write.lastrowid
         conn_write.commit()
         conn_write.close()
 
-        if is_live:
+        if is_live and not is_duplicate:
             live_passing_trades.append({"trade_id": inserted_trade_id, "ticker": ticker, "target_price": target_price})
+            tickers_passed_today.add(ticker)
+        elif is_live and is_duplicate:
+            print(f" -> Skipped execution: {ticker} is a duplicate or already owned.")
             
     # Execute live paper trades if any
     if live_passing_trades:
@@ -373,6 +388,44 @@ def run_filter():
                                 current_price = 100.0
                         except Exception:
                             current_price = 100.0
+                            
+                        # Fetch recent daily bars (last 30 calendar days) to calculate 15-day SMA
+                        sma_len = 15
+                        today = datetime.now().date()
+                        start_date = today - timedelta(days=30)
+                        start_dt = datetime.combine(start_date, datetime.min.time())
+                        end_dt = datetime.combine(today, datetime.max.time())
+                        
+                        try:
+                            bars_sma = alpaca_client.get_stock_bars(StockBarsRequest(
+                                symbol_or_symbols=ticker,
+                                timeframe=TimeFrame.Day,
+                                start=start_dt,
+                                end=end_dt,
+                                feed=DataFeed.IEX,
+                                adjustment='split'
+                            ))
+                            df_sma = bars_sma.df
+                            if df_sma is not None and not df_sma.empty:
+                                df_sma = df_sma.copy()
+                                if isinstance(df_sma.index, pd.MultiIndex):
+                                    df_sma = df_sma.xs(ticker, level='symbol')
+                                df_sma.index = df_sma.index.tz_localize(None)
+                                df_sma = df_sma.sort_index()
+                                
+                                if len(df_sma) >= sma_len:
+                                    sma_val = float(df_sma['close'].tail(sma_len).mean())
+                                    print(f"  [{ticker}] Entry Price: ${current_price:.2f}, 15-day SMA: ${sma_val:.2f}")
+                                    if current_price < sma_val:
+                                        print(f"  -> Skipped order: {ticker} current price ${current_price:.2f} is below 15-day SMA ${sma_val:.2f} (Trend filter check failed).")
+                                        cursor_update.execute("UPDATE trades SET paper_trade_status = 'skipped_below_sma' WHERE id = ?", (trade_id,))
+                                        continue
+                                else:
+                                    print(f"  Warning: Not enough history to calculate SMA for {ticker} (only {len(df_sma)} bars). Proceeding.")
+                            else:
+                                print(f"  Warning: Could not fetch SMA bars for {ticker}. Proceeding anyway.")
+                        except Exception as sma_err:
+                            print(f"  Warning: SMA calculation error for {ticker}: {sma_err}. Proceeding anyway.")
                             
                         qty = int(cash_per_trade / current_price)
                         if qty > 0:

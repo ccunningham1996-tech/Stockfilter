@@ -243,9 +243,9 @@ def evaluate_pending_trades():
                 print(f"Checking live paper position exits for {ticker} (Trade ID: {trade_id})...")
                 trading_client = TradingClient(alpaca_key, alpaca_secret, paper=True)
                 
-                 # Fetch recent daily bars (last 50 days) to calculate 30-day SMA and get latest close
+                 # Fetch recent daily bars (last 30 days) to calculate 15-day SMA and get latest close
                 today = datetime.now().date()
-                start_date = today - timedelta(days=50)
+                start_date = today - timedelta(days=30)
                 start_dt = datetime.combine(start_date, datetime.min.time())
                 end_dt = datetime.combine(today, datetime.max.time())
                 
@@ -282,23 +282,23 @@ def evaluate_pending_trades():
                     conn_up.commit()
                     conn_up.close()
                     
-                    # 1. Check 6% Rolling Stop Loss
-                    stop_price = highest_price_recorded * 0.94
+                    # 1. Check 8% Rolling Stop Loss
+                    stop_price = highest_price_recorded * 0.92
                     exit_triggered = False
                     exit_reason = ""
                     
                     if current_price <= stop_price:
                         exit_triggered = True
-                        exit_reason = "6% Trailing Stop"
+                        exit_reason = "8% Trailing Stop"
                         print(f"  -> Exit Triggered: {ticker} price ${current_price:.2f} is below trailing stop price ${stop_price:.2f} (Peak: ${highest_price_recorded:.2f})")
                     
-                    # 2. Check 30-day SMA Drop Sell Rule (only if not already stopped out)
-                    if not exit_triggered and len(df_ticker) >= 30:
-                        sma_30 = df_ticker['close'].tail(30).mean()
-                        if current_price < sma_30:
+                    # 2. Check 15-day SMA Drop Sell Rule (only if not already stopped out)
+                    if not exit_triggered and len(df_ticker) >= 15:
+                        sma_15 = df_ticker['close'].tail(15).mean()
+                        if current_price < sma_15:
                             exit_triggered = True
-                            exit_reason = "30-day SMA Drop"
-                            print(f"  -> Exit Triggered: {ticker} price ${current_price:.2f} dropped below 30-day SMA ${sma_30:.2f}")
+                            exit_reason = "15-day SMA Drop"
+                            print(f"  -> Exit Triggered: {ticker} price ${current_price:.2f} dropped below 15-day SMA ${sma_15:.2f}")
                             
                     # Execute SELL order if triggered
                     if exit_triggered:
