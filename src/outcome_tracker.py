@@ -97,17 +97,18 @@ def get_close_price(ticker, target_date_str, alpaca_client):
         
     return None
 
-def evaluate_pending_ratings():
+def evaluate_pending_ratings(alpaca_client=None):
     """
     Evaluates pending ratings in the analyst_history table once 63 trading days have passed.
     """
-    alpaca_key = os.getenv("ALPACA_API_KEY")
-    alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
-    
-    if not alpaca_key or not alpaca_secret:
-        raise ValueError("Alpaca API credentials missing. Set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
+    if alpaca_client is None:
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
         
-    alpaca_client = StockHistoricalDataClient(alpaca_key, alpaca_secret)
+        if not alpaca_key or not alpaca_secret:
+            raise ValueError("Alpaca API credentials missing. Set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
+            
+        alpaca_client = StockHistoricalDataClient(alpaca_key, alpaca_secret)
     
     print("Pre-fetching SPY benchmarks in bulk...")
     spy_finder = SPYFinder(alpaca_client)
@@ -134,7 +135,7 @@ def evaluate_pending_ratings():
     stock_price_cache = {}
     
     for idx, rating in enumerate(pending_ratings):
-        if idx > 0:
+        if idx > 0 and not hasattr(alpaca_client, 'is_mock'):
             time.sleep(1.1)
             
         r_id = rating['id']
@@ -200,17 +201,18 @@ def evaluate_pending_ratings():
         
     print(f"Ratings evaluation completed. Evaluated {evaluated_count}, withdrawn {withdrawn_count}.")
 
-def evaluate_pending_trades():
+def evaluate_pending_trades(alpaca_client=None):
     """
     Evaluates open positions in the trades table. Exits positions after exactly 63 trading days.
     """
-    alpaca_key = os.getenv("ALPACA_API_KEY")
-    alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
-    
-    if not alpaca_key or not alpaca_secret:
-        raise ValueError("Alpaca API credentials missing.")
+    if alpaca_client is None:
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
         
-    alpaca_client = StockHistoricalDataClient(alpaca_key, alpaca_secret)
+        if not alpaca_key or not alpaca_secret:
+            raise ValueError("Alpaca API credentials missing.")
+            
+        alpaca_client = StockHistoricalDataClient(alpaca_key, alpaca_secret)
     
     print("Pre-fetching SPY benchmarks for trade evaluation...")
     spy_finder = SPYFinder(alpaca_client)
@@ -357,7 +359,7 @@ def evaluate_pending_trades():
             continue
 
         # Rate limit safety sleep
-        if idx > 0:
+        if idx > 0 and not hasattr(alpaca_client, 'is_mock'):
             time.sleep(1.1)
             
         try:
@@ -433,9 +435,9 @@ def evaluate_pending_trades():
             
     print(f"Trades evaluation completed. Exited {exited_count} positions.")
 
-def run_outcome_tracker():
-    evaluate_pending_ratings()
-    evaluate_pending_trades()
+def run_outcome_tracker(alpaca_client=None):
+    evaluate_pending_ratings(alpaca_client=alpaca_client)
+    evaluate_pending_trades(alpaca_client=alpaca_client)
     
     # Dynamically correct any stock split issues
     try:

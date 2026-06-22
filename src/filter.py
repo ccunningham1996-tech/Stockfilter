@@ -48,19 +48,21 @@ def get_winrate_as_of(analyst_name, firm, as_of_date):
 
 def get_volume_data_as_of(ticker, signal_date_str, alpaca_client):
     """
-    Fetches daily stock bars from Alpaca, checks Day T's session structure (Close > Open)
-    and computes the volume spike multiple relative to the 30 trading days prior to Day T.
+    Fetches daily stock bars from Alpaca, finds the first trading day on or after signal_date_str,
+    checks that day's session structure (Close > Open) and computes the volume spike multiple
+    relative to the 30 trading days prior to that day.
     """
     try:
         signal_date = datetime.strptime(signal_date_str, "%Y-%m-%d").date()
     except Exception:
         return None, None, None, None
         
-    start_date = signal_date - timedelta(days=50)  # extra buffer for trading days
+    start_date = signal_date - timedelta(days=60)  # extra buffer for trading days
     
-    # Format timezone-aware datetimes for Alpaca API
+    # Query up to today to capture first trading day on/after signal_date
+    today = datetime.now().date()
     start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(signal_date, datetime.max.time())
+    end_dt = datetime.combine(today, datetime.max.time())
     
     try:
         bars = alpaca_client.get_stock_bars(StockBarsRequest(
@@ -85,38 +87,49 @@ def get_volume_data_as_of(ticker, signal_date_str, alpaca_client):
                 first_symbol = df.index.levels[0][0]
                 df = df.xs(first_symbol, level='symbol')
         df.index = df.index.tz_localize(None)
+        df = df.sort_index()
         
-        # Get Day T's bar
-        day_t_bar = df[df.index.date == signal_date]
-        if day_t_bar.empty:
+        # Find first trading day on or after signal_date
+        df_after = df[df.index.date >= signal_date]
+        if df_after.empty:
             return None, None, None, None
             
-        # 30-day SMA uses only the 30 trading days BEFORE Day T
-        prior_bars = df[df.index.date < signal_date].tail(30)
+        actual_signal_dt = df_after.index[0]
+        actual_signal_date = actual_signal_dt.date()
+        
+        # Get Day T's bar (actual signal date)
+        day_t_bar = df_after.iloc[0]
+        
+        # 30-day SMA uses only the 30 trading days BEFORE actual_signal_date
+        prior_bars = df[df.index.date < actual_signal_date].tail(30)
         if len(prior_bars) < 20:  # require at least 20 trading days of volume history
             return None, None, None, None
             
         volume_sma_30 = prior_bars['volume'].mean()
-        day_t_volume = day_t_bar['volume'].iloc[0]
-        day_t_close = day_t_bar['close'].iloc[0]
-        day_t_open = day_t_bar['open'].iloc[0]
+        day_t_volume = day_t_bar['volume']
+        day_t_close = day_t_bar['close']
+        day_t_open = day_t_bar['open']
         
         spike_multiple = day_t_volume / volume_sma_30 if volume_sma_30 > 0 else 0.0
         positive_close = day_t_close > day_t_open
         
-        return spike_multiple, positive_close, (day_t_close, day_t_open), df
+        # Return history up to actual_signal_date
+        df_history = df[df.index.date <= actual_signal_date]
+        
+        return spike_multiple, positive_close, (day_t_close, day_t_open), df_history
     except Exception as e:
         print(f"Error fetching OHLCV for {ticker} as of {signal_date_str}: {e}")
         return None, None, None, None
 
-def run_filter():
-    alpaca_key = os.getenv("ALPACA_API_KEY")
-    alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
-    
-    if not alpaca_key or not alpaca_secret:
-        raise ValueError("Alpaca API credentials missing. Set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
+def run_filter(alpaca_client=None):
+    if alpaca_client is None:
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
         
-    alpaca_client = StockHistoricalDataClient(alpaca_key, alpaca_secret)
+        if not alpaca_key or not alpaca_secret:
+            raise ValueError("Alpaca API credentials missing. Set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
+            
+        alpaca_client = StockHistoricalDataClient(alpaca_key, alpaca_secret)
     
     # 1. Fetch pending signals and close connection immediately
     conn = get_connection()
@@ -136,7 +149,7 @@ def run_filter():
     
     for idx, signal in enumerate(pending_signals):
         # Rate limit safety sleep
-        if idx > 0:
+        if idx > 0 and not hasattr(alpaca_client, 'is_mock'):
             time.sleep(1.1)
             
         sig_id = signal['id']
@@ -228,9 +241,9 @@ def run_filter():
         entry_price = None
         
         try:
-            signal_date_obj = datetime.strptime(signal_date, "%Y-%m-%d").date()
-            t1_start = datetime.combine(signal_date_obj + timedelta(days=1), datetime.min.time())
-            t1_end = datetime.combine(signal_date_obj + timedelta(days=7), datetime.max.time())
+            actual_signal_date = df_history.index[-1].date()
+            t1_start = datetime.combine(actual_signal_date + timedelta(days=1), datetime.min.time())
+            t1_end = datetime.combine(actual_signal_date + timedelta(days=7), datetime.max.time())
             
             t1_bars = alpaca_client.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=ticker,
@@ -258,15 +271,15 @@ def run_filter():
                 entry_price = round(float(t_plus_1_bar['open']), 2)
                 print(f" -> Found T+1 Open: Entry on {entry_date} at ${entry_price:.2f}")
             else:
-                print(f" -> Warning: No T+1 to T+7 bars returned from Alpaca for {ticker} starting from {signal_date_obj + timedelta(days=1)}")
+                print(f" -> Warning: No T+1 to T+7 bars returned from Alpaca for {ticker} starting from {actual_signal_date + timedelta(days=1)}")
         except Exception as e:
             print(f"Could not resolve T+1 entry parameters: {e}")
             
-        # Check if the signal is live (within last 2 days)
+        # Check if the signal is live (within last 4 days to handle weekends/holidays)
         is_live = False
         try:
             sig_date_obj = datetime.strptime(signal_date, "%Y-%m-%d").date()
-            is_live = sig_date_obj >= (datetime.now().date() - timedelta(days=2))
+            is_live = sig_date_obj >= (datetime.now().date() - timedelta(days=4))
         except Exception:
             pass
 

@@ -5,7 +5,10 @@ import yfinance as yf
 from datetime import datetime
 
 # Database config
-DB_PATH = os.path.join("data", "screener.db")
+try:
+    from src.db import DB_PATH
+except ImportError:
+    DB_PATH = os.path.join("data", "screener.db")
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=30)
