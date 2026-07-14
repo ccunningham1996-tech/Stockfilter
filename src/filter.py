@@ -20,13 +20,104 @@ from src.db import get_connection
 
 load_dotenv()
 
+def normalize_firm_name(firm):
+    """
+    Standardizes firm names scraped from MarketBeat to match those stored in analyst_history database.
+    """
+    if not firm:
+        return "N/A"
+    
+    firm_lower = firm.lower()
+    
+    mapping = {
+        "jpmorgan chase & co.": "JP Morgan",
+        "jpmorgan": "JP Morgan",
+        "jp morgan": "JP Morgan",
+        "bank of america": "B of A Securities",
+        "bofas": "B of A Securities",
+        "bofa securities": "B of A Securities",
+        "bofa": "B of A Securities",
+        "citigroup": "Citigroup",
+        "citi": "Citigroup",
+        "truist financial": "Truist Securities",
+        "truist": "Truist Securities",
+        "deutsche bank aktiengesellschaft": "Deutsche Bank",
+        "deutsche bank": "Deutsche Bank",
+        "ubs group": "UBS",
+        "ubs": "UBS",
+        "jefferies financial group": "Jefferies",
+        "jefferies": "Jefferies",
+        "wells fargo & company": "Wells Fargo",
+        "wells fargo": "Wells Fargo",
+        "royal bank of canada": "RBC Capital",
+        "rbc capital markets": "RBC Capital",
+        "rbc": "RBC Capital",
+        "bmo capital markets": "BMO Capital",
+        "bmo": "BMO Capital",
+        "raymond james financial": "Raymond James",
+        "raymond james": "Raymond James",
+        "evercore isi group": "Evercore ISI Group",
+        "evercore": "Evercore ISI Group",
+        "goldman sachs group": "Goldman Sachs",
+        "goldman sachs": "Goldman Sachs",
+        "morgan stanley": "Morgan Stanley",
+        "barclays": "Barclays",
+        "mizuho": "Mizuho",
+        "mizuho financial group": "Mizuho",
+        "scotiabank": "Scotiabank",
+        "bnp paribas exane": "BNP Paribas",
+        "bnp paribas": "BNP Paribas",
+        "keefe, bruyette & woods": "Keefe, Bruyette & Woods",
+        "kbw": "Keefe, Bruyette & Woods",
+        "piper sandler": "Piper Sandler",
+        "wedbush": "Wedbush",
+        "wolfe research": "Wolfe Research",
+        "h.c. wainwright": "HC Wainwright & Co.",
+        "hc wainwright": "HC Wainwright & Co.",
+        "stephens": "Stephens & Co.",
+        "needham & company llc": "Needham",
+        "needham": "Needham",
+        "td cowen": "TD Cowen",
+        "cowen": "TD Cowen",
+        "guggenheim": "Guggenheim",
+        "guggenheim securities": "Guggenheim",
+        "oppenheimer": "Oppenheimer",
+        "stifel nicolaus": "Stifel",
+        "stifel": "Stifel",
+        "btig": "BTIG",
+        "cantor fitzgerald": "Cantor Fitzgerald",
+        "da davidson": "DA Davidson",
+        "keybanc": "Keybanc",
+        "keybanc capital markets": "Keybanc",
+        "loop capital": "Loop Capital",
+        "melius research": "Melius Research",
+        "rosenblatt": "Rosenblatt",
+        "rosenblatt securities": "Rosenblatt",
+        "seaport global": "Seaport Global",
+        "seaport global securities": "Seaport Global",
+        "telsey advisory group": "Telsey Advisory Group",
+        "william blair": "William Blair"
+    }
+    
+    for key, val in mapping.items():
+        if key in firm_lower:
+            return val
+            
+    # Fallback title case clean
+    clean_firm = firm.replace("Aktiengesellschaft", "").replace("Group", "").replace("Financial", "").replace("Securities", "").strip()
+    return clean_firm
+
 def get_winrate_as_of(analyst_name, firm, as_of_date):
     """
     Query analyst_history for the analyst's ratings closed strictly before signal_date.
+    If the analyst has fewer than 10 ratings, falls back to the firm-level ratings (where analyst_name = 'N/A').
     Returns (win_rate, total_count)
     """
+    normalized_firm = normalize_firm_name(firm)
     conn = get_connection()
     cursor = conn.cursor()
+    
+    # 1. Try to query by specific analyst name and normalized firm
     cursor.execute("""
         SELECT COUNT(*) as total,
                SUM(CASE WHEN status='Won' THEN 1 ELSE 0 END) as won
@@ -35,11 +126,31 @@ def get_winrate_as_of(analyst_name, firm, as_of_date):
           AND firm = ?
           AND evaluation_date < ?
           AND status IN ('Won', 'Lost')
-    """, [analyst_name, firm, as_of_date])
+    """, [analyst_name, normalized_firm, as_of_date])
     
     row = cursor.fetchone()
     total = row['total'] if row['total'] is not None else 0
     won = row['won'] if row['won'] is not None else 0
+    
+    # 2. Fallback to firm-level if specific analyst has < 10 ratings
+    if total < 10 and analyst_name != 'N/A':
+        cursor.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN status='Won' THEN 1 ELSE 0 END) as won
+            FROM analyst_history
+            WHERE analyst_name = 'N/A'
+              AND firm = ?
+              AND evaluation_date < ?
+              AND status IN ('Won', 'Lost')
+        """, [normalized_firm, as_of_date])
+        row_firm = cursor.fetchone()
+        total_firm = row_firm['total'] if row_firm['total'] is not None else 0
+        won_firm = row_firm['won'] if row_firm['won'] is not None else 0
+        
+        if total_firm >= 10:
+            total = total_firm
+            won = won_firm
+            
     conn.close()
     
     if total == 0:
