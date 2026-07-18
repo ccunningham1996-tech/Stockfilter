@@ -249,7 +249,7 @@ def run_filter(alpaca_client=None):
     cursor.execute("""
         SELECT * FROM daily_signals 
         WHERE filter_status = 'pending' 
-          AND signal_date < ?
+          AND signal_date <= ?
     """, (today_str,))
     pending_signals = [dict(row) for row in cursor.fetchall()]
     conn.close()
