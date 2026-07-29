@@ -25,7 +25,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
-from src.db import get_connection
+from src.db import get_connection, init_db
 from src.universe import get_sp1500_tickers
 
 FINNHUB_BASE = "https://finnhub.io/api/v1"
@@ -325,6 +325,8 @@ def rebalance(target_tickers, trading_client, data_client):
 # ---------------------------------------------------------------------------
 
 def run_strategy(strategy_name, metric_spec, top_n=40, min_rebalance_interval_days=80, universe_limit=None):
+    init_db()  # ensures this profile's DB file, directory, and tables exist before first use
+
     finnhub_key = os.getenv("FINNHUB_API_KEY")
     alpaca_key = os.getenv("ALPACA_API_KEY")
     alpaca_secret = os.getenv("ALPACA_SECRET_KEY")

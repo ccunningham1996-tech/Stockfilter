@@ -19,7 +19,7 @@ def get_connection():
 
 def init_db():
     """Initializes the database tables if they do not exist."""
-    os.makedirs(DB_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     conn = get_connection()
     cursor = conn.cursor()
     
