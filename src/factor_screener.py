@@ -118,6 +118,7 @@ def fetch_fundamentals(ticker, finnhub_key, use_cache=True):
         sector = (resp.json() or {}).get("finnhubIndustry")
     except Exception as e:
         print(f"  Warning: could not fetch profile for {ticker} (after retries): {e}")
+    time.sleep(FINNHUB_RATE_LIMIT_SLEEP)  # pace every real call, not once per ticker -- each ticker makes 2
 
     try:
         resp = _get_with_retry(
@@ -128,6 +129,7 @@ def fetch_fundamentals(ticker, finnhub_key, use_cache=True):
         metrics_fetch_succeeded = True
     except Exception as e:
         print(f"  Warning: could not fetch metrics for {ticker} (after retries): {e}")
+    time.sleep(FINNHUB_RATE_LIMIT_SLEEP)
 
     # Only cache a genuinely successful metrics fetch -- caching a failed
     # call (e.g. bad credentials) would otherwise make every future run
@@ -201,7 +203,6 @@ def build_universe_scores(metric_spec, finnhub_key, tickers=None, verbose_every=
 
         sector, raw_metrics = fetch_fundamentals(ticker, finnhub_key)
         if not raw_metrics:
-            time.sleep(FINNHUB_RATE_LIMIT_SLEEP)
             continue
 
         row = {"ticker": ticker, "sector": sector or "Unknown"}
@@ -213,8 +214,6 @@ def build_universe_scores(metric_spec, finnhub_key, tickers=None, verbose_every=
                 have_any = True
         if have_any:
             records.append(row)
-
-        time.sleep(FINNHUB_RATE_LIMIT_SLEEP)
 
     return _score_records(records, metric_spec)
 
