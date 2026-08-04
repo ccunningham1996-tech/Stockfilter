@@ -285,6 +285,8 @@ def rebalance(target_tickers, trading_client, data_client):
     cursor = conn.cursor()
     today_str = datetime.now().strftime("%Y-%m-%d")
 
+    sold_count = 0
+    failed_sells = []
     for h in to_sell:
         ticker = h["ticker"]
         qty = h["qty"]
@@ -297,10 +299,14 @@ def rebalance(target_tickers, trading_client, data_client):
                 "UPDATE factor_holdings SET status = 'closed', exit_date = ? WHERE id = ?",
                 (today_str, h["id"]),
             )
+            sold_count += 1
         except Exception as e:
             print(f"Failed to sell {ticker}: {e}")
+            failed_sells.append(ticker)
     conn.commit()
 
+    bought_count = 0
+    failed_buys = []
     if to_buy:
         account = trading_client.get_account()
         available_cash = float(account.cash)
@@ -315,6 +321,7 @@ def rebalance(target_tickers, trading_client, data_client):
                 quote = quote_resp.get(ticker)
                 if quote is None:
                     print(f"  Skipping {ticker}: no quote returned.")
+                    failed_buys.append(ticker)
                     continue
                 price = (
                     (quote.ask_price + quote.bid_price) / 2
@@ -323,11 +330,13 @@ def rebalance(target_tickers, trading_client, data_client):
                 )
                 if not price or price <= 0:
                     print(f"  Skipping {ticker}: no valid quote price.")
+                    failed_buys.append(ticker)
                     continue
 
                 qty = int(cash_per_position / price)
                 if qty <= 0:
                     print(f"  Skipping {ticker}: allocation ${cash_per_position:.2f} too small for 1 share at ${price:.2f}.")
+                    failed_buys.append(ticker)
                     continue
 
                 order = trading_client.submit_order(MarketOrderRequest(
@@ -341,12 +350,31 @@ def rebalance(target_tickers, trading_client, data_client):
                     """,
                     (ticker, today_str, round(price, 2), qty),
                 )
+                bought_count += 1
             except Exception as e:
                 print(f"Failed to buy {ticker}: {e}")
+                failed_buys.append(ticker)
         conn.commit()
 
     conn.close()
-    print(f"Rebalance complete: sold {len(to_sell)}, bought {len(to_buy)}, target basket size {len(target_tickers)}.")
+
+    print(
+        f"Rebalance complete: sold {sold_count}/{len(to_sell)} attempted, "
+        f"bought {bought_count}/{len(to_buy)} attempted, target basket size {len(target_tickers)}."
+    )
+    if failed_sells:
+        print(f"  Still holding (sell failed): {failed_sells}")
+    if failed_buys:
+        print(f"  Not bought (failed/skipped): {failed_buys}")
+
+    return {
+        "sold": sold_count,
+        "sell_attempted": len(to_sell),
+        "failed_sells": failed_sells,
+        "bought": bought_count,
+        "buy_attempted": len(to_buy),
+        "failed_buys": failed_buys,
+    }
 
 
 # ---------------------------------------------------------------------------
