@@ -82,6 +82,7 @@ def fetch_fundamentals(ticker, finnhub_key, use_cache=True):
 
     sector = None
     metrics = {}
+    metrics_fetch_succeeded = False
     try:
         resp = requests.get(
             f"{FINNHUB_BASE}/stock/profile2",
@@ -101,10 +102,16 @@ def fetch_fundamentals(ticker, finnhub_key, use_cache=True):
         )
         resp.raise_for_status()
         metrics = (resp.json() or {}).get("metric") or {}
+        metrics_fetch_succeeded = True
     except Exception as e:
         print(f"  Warning: could not fetch metrics for {ticker}: {e}")
 
-    _save_cached_fundamentals(ticker, sector, metrics)
+    # Only cache a genuinely successful metrics fetch -- caching a failed
+    # call (e.g. bad credentials) would otherwise make every future run
+    # silently reuse that empty result for CACHE_MAX_AGE_DAYS instead of
+    # retrying once the real problem is fixed.
+    if metrics_fetch_succeeded:
+        _save_cached_fundamentals(ticker, sector, metrics)
     return sector, metrics
 
 
