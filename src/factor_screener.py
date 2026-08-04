@@ -31,11 +31,38 @@ from src.universe import get_sp1500_tickers
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 CACHE_MAX_AGE_DAYS = 25
 FINNHUB_RATE_LIMIT_SLEEP = 1.1  # seconds between calls, matches existing repo convention
+FINNHUB_MAX_RETRIES = 2  # extra attempts after the first, for transient errors only
+FINNHUB_RETRY_BACKOFF_BASE = 2  # seconds; doubles each retry (2s, 4s, ...)
 
 
 # ---------------------------------------------------------------------------
 # Fundamentals fetch + cache
 # ---------------------------------------------------------------------------
+
+def _get_with_retry(url, params, timeout=10):
+    """GETs a URL, retrying with exponential backoff on transient failures
+    (timeouts, connection errors, 5xx server errors). Does NOT retry on 4xx
+    client errors (bad key, unknown symbol, etc.) since retrying can't fix
+    those -- it just raises immediately so the caller can log it once."""
+    last_exception = None
+    for attempt in range(FINNHUB_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status is not None and status < 500:
+                raise  # 4xx: not transient, don't waste retries on it
+            last_exception = e
+        except requests.exceptions.RequestException as e:
+            last_exception = e  # timeouts, connection errors: worth retrying
+
+        if attempt < FINNHUB_MAX_RETRIES:
+            sleep_time = FINNHUB_RETRY_BACKOFF_BASE * (2 ** attempt)
+            time.sleep(sleep_time)
+
+    raise last_exception
 
 def _get_cached_fundamentals(ticker):
     conn = get_connection()
@@ -84,27 +111,23 @@ def fetch_fundamentals(ticker, finnhub_key, use_cache=True):
     metrics = {}
     metrics_fetch_succeeded = False
     try:
-        resp = requests.get(
+        resp = _get_with_retry(
             f"{FINNHUB_BASE}/stock/profile2",
             params={"symbol": ticker, "token": finnhub_key},
-            timeout=10,
         )
-        resp.raise_for_status()
         sector = (resp.json() or {}).get("finnhubIndustry")
     except Exception as e:
-        print(f"  Warning: could not fetch profile for {ticker}: {e}")
+        print(f"  Warning: could not fetch profile for {ticker} (after retries): {e}")
 
     try:
-        resp = requests.get(
+        resp = _get_with_retry(
             f"{FINNHUB_BASE}/stock/metric",
             params={"symbol": ticker, "metric": "all", "token": finnhub_key},
-            timeout=10,
         )
-        resp.raise_for_status()
         metrics = (resp.json() or {}).get("metric") or {}
         metrics_fetch_succeeded = True
     except Exception as e:
-        print(f"  Warning: could not fetch metrics for {ticker}: {e}")
+        print(f"  Warning: could not fetch metrics for {ticker} (after retries): {e}")
 
     # Only cache a genuinely successful metrics fetch -- caching a failed
     # call (e.g. bad credentials) would otherwise make every future run
