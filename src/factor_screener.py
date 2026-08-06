@@ -308,8 +308,17 @@ def rebalance(target_tickers, trading_client, data_client):
     bought_count = 0
     failed_buys = []
     if to_buy:
-        account = trading_client.get_account()
-        available_cash = float(account.cash)
+        available_cash = float(trading_client.get_account().cash)
+        if available_cash <= 0:
+            print(
+                f"Skipping all {len(to_buy)} new buys: account cash is ${available_cash:.2f} "
+                f"(<=0). Not attempting any orders until cash recovers -- check the account for "
+                f"stuck/over-committed positions."
+            )
+            failed_buys.extend(to_buy)
+            to_buy = []
+
+    if to_buy:
         cash_per_position = available_cash / len(to_buy)
         print(f"Allocating ${cash_per_position:.2f} to each of {len(to_buy)} new positions.")
 
