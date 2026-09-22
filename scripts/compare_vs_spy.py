@@ -1,10 +1,11 @@
 """
-Compares each running strategy's real paper-account performance against
-SPY's return since that strategy's actual first trade -- not an arbitrary
-lookback window -- pulled from Alpaca's own portfolio history for the
-account side, and each strategy's own DB for "when did it actually start."
+Compares each running strategy's real paper-account performance (return and
+max drawdown) against SPY and QQQ since that strategy's actual first trade --
+not an arbitrary lookback window -- pulled from Alpaca's own portfolio history
+for the account side, and each strategy's own DB for "when did it actually
+start."
 
-Run this from wherever .env / .env.value / .env.quality actually live
+Run this from wherever the strategies' .env profile files actually live
 (the VM, since all three real accounts are configured there) -- any
 profile whose .env file is missing, whose account has no trades yet, or
 whose credentials are rejected, is skipped rather than erroring the whole
@@ -31,7 +32,9 @@ STRATEGIES = [
     ("Momentum (analyst upgrades)", ".env", "trades", "entry_date"),
     ("Value (VLUE-style)", ".env.value", "factor_holdings", "entry_date"),
     ("Quality (QUAL-style)", ".env.quality", "factor_holdings", "entry_date"),
+    ("NDX Momentum Buffered", ".env.ndx_mom_buffer", "ndx_orders", "trade_date"),
 ]
+BENCHMARKS = ["SPY", "QQQ"]
 
 
 def get_first_trade_date(db_path, table, date_col):
@@ -47,9 +50,9 @@ def get_first_trade_date(db_path, table, date_col):
         conn.close()
 
 
-def get_spy_return_pct(data_client, start_dt, end_dt):
+def get_benchmark_return_pct(data_client, symbol, start_dt, end_dt):
     req = StockBarsRequest(
-        symbol_or_symbols="SPY",
+        symbol_or_symbols=symbol,
         timeframe=TimeFrame.Day,
         start=start_dt,
         end=end_dt,
@@ -112,10 +115,11 @@ def analyze_strategy(label, env_file, table, date_col):
     end_date = datetime.fromtimestamp(end_ts, tz=timezone.utc)
 
     strategy_return_pct = (end_equity / start_equity - 1) * 100
-    spy_return_pct = get_spy_return_pct(data_client, start_date, end_date)
-    excess_return_pct = (
-        strategy_return_pct - spy_return_pct if spy_return_pct is not None else None
-    )
+    bench = {b: get_benchmark_return_pct(data_client, b, start_date, end_date) for b in BENCHMARKS}
+    peak, max_dd = paired[0][1], 0.0
+    for _, e in paired:
+        peak = max(peak, e)
+        max_dd = min(max_dd, e / peak - 1)
 
     return {
         "strategy": label,
@@ -123,8 +127,8 @@ def analyze_strategy(label, env_file, table, date_col):
         "end_date": end_date.date(),
         "end_equity": end_equity,
         "strategy_return_pct": strategy_return_pct,
-        "spy_return_pct": spy_return_pct,
-        "excess_return_pct": excess_return_pct,
+        "max_drawdown_pct": max_dd * 100,
+        "benchmarks": bench,
     }
 
 
@@ -133,16 +137,22 @@ def print_results(results):
         print("No strategies had enough data to compare yet.")
         return
 
-    header = f"{'Strategy':<30}{'Since first trade':<24}{'Equity':<15}{'Return':<10}{'SPY':<10}{'Excess':<10}"
+    pct = lambda v: f"{v:+.2f}%" if v is not None else "n/a"
+    header = (f"{'Strategy':<30}{'Since first trade':<26}{'Equity':<15}{'Return':<10}{'MaxDD':<10}"
+              + "".join(f"{b:<10}{'vs ' + b:<10}" for b in BENCHMARKS))
     print(f"\n{header}")
     print("-" * len(header))
     for r in results:
         window = f"{r['start_date']} to {r['end_date']}"
-        ret_str = f"{r['strategy_return_pct']:+.2f}%"
-        spy_str = f"{r['spy_return_pct']:+.2f}%" if r["spy_return_pct"] is not None else "n/a"
-        excess_str = f"{r['excess_return_pct']:+.2f}%" if r["excess_return_pct"] is not None else "n/a"
-        equity_str = f"${r['end_equity']:,.2f}"
-        print(f"{r['strategy']:<30}{window:<24}{equity_str:<15}{ret_str:<10}{spy_str:<10}{excess_str:<10}")
+        line = (f"{r['strategy']:<30}{window:<26}{'$' + format(r['end_equity'], ',.2f'):<15}"
+                f"{pct(r['strategy_return_pct']):<10}{pct(r['max_drawdown_pct']):<10}")
+        for b in BENCHMARKS:
+            b_ret = r["benchmarks"][b]
+            excess = r["strategy_return_pct"] - b_ret if b_ret is not None else None
+            line += f"{pct(b_ret):<10}{pct(excess):<10}"
+        print(line)
+    print("\nFor NDX Momentum Buffered, QQQ is the fair benchmark; run "
+          "`python -m scripts.run_ndx_mom_buffer report` for its monthly returns and sector mix.")
 
 
 def main():
