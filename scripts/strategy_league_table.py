@@ -16,7 +16,11 @@ Outputs (in --out-dir):
   league_table_by_period.csv  one row per signal x period
   league_table_summary.csv    one row per signal, ranked by robustness
 
-Requires:  pip install openassetpricing
+Requires (install openassetpricing WITHOUT its deps -- its `wrds` dependency
+pins an old pandas that won't build on Python 3.14 and would downgrade the
+pandas the live strategies use):
+  pip install polars tabulate
+  pip install --no-deps openassetpricing
 Usage:
   python -m scripts.strategy_league_table
   python -m scripts.strategy_league_table --periods 1990-1999,2000-2009,2010-2019,2020-2099
@@ -74,9 +78,23 @@ def fetch_french_market():
     return parse_french_monthly(text)
 
 
-def fetch_strategy_returns(release=None):
+def _import_openap():
+    # openassetpricing imports `wrds` at load time, but only uses it for CRSP
+    # downloads we never call. wrds pins an old pandas with no Python 3.14
+    # wheel (it tries to compile from source and would downgrade pandas), so
+    # install openassetpricing with --no-deps and stub wrds if it's absent.
+    try:
+        import wrds  # noqa: F401
+    except ImportError:
+        import sys
+        import types
+        sys.modules["wrds"] = types.ModuleType("wrds")
     from openassetpricing import OpenAP
+    return OpenAP
 
+
+def fetch_strategy_returns(release=None):
+    OpenAP = _import_openap()
     openap = OpenAP(release)
     ports = openap.dl_port("op", "pandas")
     doc = openap.dl_signal_doc("pandas")
