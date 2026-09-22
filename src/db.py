@@ -1,8 +1,11 @@
 import os
 import sqlite3
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DB_DIR = "data"
-DB_PATH = os.path.join(DB_DIR, "screener.db")
+DB_PATH = os.environ.get("SCREENER_DB_PATH", os.path.join(DB_DIR, "screener.db"))
 
 def get_connection():
     """Returns a SQLite connection with row factory configured to dict-like rows."""
@@ -16,7 +19,7 @@ def get_connection():
 
 def init_db():
     """Initializes the database tables if they do not exist."""
-    os.makedirs(DB_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -132,7 +135,45 @@ def init_db():
             cursor.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
         except sqlite3.OperationalError:
             pass  # Already exists
-            
+
+    # Create factor_scores table (value/quality screener rankings, one profile DB per strategy)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS factor_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        as_of_date TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        sector TEXT,
+        composite_score REAL,
+        rank INTEGER,
+        raw_metrics_json TEXT,
+        UNIQUE(as_of_date, ticker)
+    )
+    """)
+
+    # Create factor_holdings table (current/past basket positions for a factor screener)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS factor_holdings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        entry_date TEXT NOT NULL,
+        entry_price REAL,
+        qty INTEGER,
+        exit_date TEXT,
+        exit_price REAL,
+        status TEXT DEFAULT 'open'
+    )
+    """)
+
+    # Create factor_fundamentals_cache table (avoids re-hitting Finnhub's rate limit on every run)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS factor_fundamentals_cache (
+        ticker TEXT PRIMARY KEY,
+        sector TEXT,
+        metrics_json TEXT,
+        fetched_date TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
     print("Database tables initialized and migrated successfully.")

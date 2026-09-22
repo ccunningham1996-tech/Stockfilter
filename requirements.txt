@@ -2,6 +2,7 @@ streamlit
 finnhub-python
 alpaca-py
 pandas
+numpy
 python-dotenv
 yfinance
 lxml
